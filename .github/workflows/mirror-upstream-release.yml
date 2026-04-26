@@ -1,0 +1,66 @@
+name: Mirror upstream 3x-ui release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Upstream release tag to mirror. Leave empty for latest."
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 3 * * 0"
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM_REPO: MHSanaei/3x-ui
+      TARGET_REPO: ${{ github.repository }}
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ inputs.tag }}"
+          if [ -z "$tag" ]; then
+            tag="$(gh release view --repo "$UPSTREAM_REPO" --json tagName --jq .tagName)"
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Mirroring upstream release: $tag"
+
+      - name: Download upstream release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh release download "${{ steps.release.outputs.tag }}" \
+            --repo "$UPSTREAM_REPO" \
+            --dir release-assets
+
+          find release-assets -maxdepth 1 -type f -print
+
+      - name: Create or update release in this fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release.outputs.tag }}"
+
+          if gh release view "$tag" --repo "$TARGET_REPO" >/dev/null 2>&1; then
+            echo "Release $tag already exists in $TARGET_REPO"
+          else
+            gh release create "$tag" \
+              --repo "$TARGET_REPO" \
+              --title "$tag" \
+              --notes "Mirrored from https://github.com/${UPSTREAM_REPO}/releases/tag/${tag}"
+          fi
+
+          gh release upload "$tag" release-assets/* \
+            --repo "$TARGET_REPO" \
+            --clobber
